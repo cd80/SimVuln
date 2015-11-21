@@ -116,7 +116,8 @@ class SimVuln():
                         cur_function_code = ''
                         continue
                     p = re.compile("[a-zA-Z0-9_]+")
-                    if p.match(func_def) is None:
+                    if p.match(func_def) is None or \
+                       len(p.match(func_def).group()) != len(func_def):
                         is_function = 0
                         cur_function_code = ''
                         continue
@@ -295,7 +296,6 @@ if __name__ == '__main__':
         print "============================================================="
         print "Checking similar functions for [%s]\n"%(cur)
         sv.list_similar_functions(tokenized_code)
-        break
     
 ##        sv.list_similar_functions(target="fdctrl_read_data")
     
