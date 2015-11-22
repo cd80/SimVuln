@@ -1,3 +1,4 @@
+import pyximport;pyximport.install()
 import re
 
 ##f = open("vaja.c", "r")
@@ -6,39 +7,6 @@ import re
 ##f = open("D:/study/qemu-2.3.0/libcacard/card_7816.c", "r")
 ##code = f.read()
 ##f.close()
-def merge_dicts(*dict_args):
-    '''
-    Given any number of dicts, shallow copy and merge into a new dict,
-    precedence goes to key value pairs in latter dicts.
-    '''
-    result = {}
-    for dictionary in dict_args:
-        result.update(dictionary)
-    return result
-def dynamicTimeWarp(seqA, seqB, d = lambda x,y: abs(x-y)):
-    # create the cost matrix
-    numRows, numCols = len(seqA), len(seqB)
-    cost = [[0 for _ in range(numCols)] for _ in range(numRows)]
- 
-    # initialize the first row and column
-    cost[0][0] = d(seqA[0], seqB[0])
-    for i in xrange(1, numRows):
-        cost[i][0] = cost[i-1][0] + d(seqA[i], seqB[0])
- 
-    for j in xrange(1, numCols):
-        cost[0][j] = cost[0][j-1] + d(seqA[0], seqB[j])
- 
-    # fill in the rest of the matrix
-    for i in xrange(1, numRows):
-        for j in xrange(1, numCols):
-            choices = cost[i-1][j], cost[i][j-1], cost[i-1][j-1]
-            cost[i][j] = min(choices) + d(seqA[i], seqB[j])
- 
-##    for row in cost:
-##       for entry in row:
-##          print "%03d" % entry,
-##       print ""
-    return cost[-1][-1]
 class SimVuln():
     '''
     sv = SimVuln()
@@ -57,6 +25,42 @@ class SimVuln():
         # self.tokenized_codes[function_name] = tokenized function code
         self.similarity_dict = {}
         # self.similarity_rank[nth_target_function] = sorted_by_dtw_distance_in_ascending_order({function_name:dtw_distance})
+    def dynamicTimeWarp(self, seqA, seqB, d = lambda x,y: abs(x-y)):
+        # create the cost matrix
+        numRows, numCols = len(seqA), len(seqB)
+        cost = [[0 for _ in range(numCols)] for _ in range(numRows)]
+     
+        # initialize the first row and column
+        cost[0][0] = d(seqA[0], seqB[0])
+        for i in xrange(1, numRows):
+            cost[i][0] = cost[i-1][0] + d(seqA[i], seqB[0])
+     
+        for j in xrange(1, numCols):
+            cost[0][j] = cost[0][j-1] + d(seqA[0], seqB[j])
+     
+        # fill in the rest of the matrix
+        for i in xrange(1, numRows):
+            for j in xrange(1, numCols):
+                choices = cost[i-1][j], cost[i][j-1], cost[i-1][j-1]
+                cost[i][j] = min(choices) + d(seqA[i], seqB[j])
+        return cost[-1][-1]
+    def merge_dicts(self, *dict_args):
+        '''
+        Given any number of dicts, shallow copy and merge into a new dict,
+        precedence goes to key value pairs in latter dicts.
+        '''
+        result = {}
+        for dictionary in dict_args:
+            result.update(dictionary)
+        return result
+
+     
+    ##    for row in cost:
+    ##       for entry in row:
+    ##          print "%03d" % entry,
+    ##       print ""
+        return cost[-1][-1]
+
     def _process_code(self, file_name, code, module_usage=False):    
         p = []
         p.append(re.compile(r"\s*//.*")) # single-line comments
@@ -68,13 +72,14 @@ class SimVuln():
 ##        p.append(re.compile(r"(typedef|struct|union)\s+?[^\(\);]*?(\{(.|\s)*?\})+.*?;", re.MULTILINE))
         ##print re.sub(pattern, lambda x: x, code)
 ##        p.append(re.compile(r"(typedef|struct|union)\s+?[^\(\);]*?(\{(.|\s)*?\})+(.|\s)*?;"))
-        p.append(re.compile(r"(typedef|struct|union|static|const)\s+?[^\(\);]*?(\{(.|\s)*?\})+(.|\s)*?;"))
+        p.append(re.compile(r"(typedef|struct|union|static|const|enum)\s+?[^\(\)\=;]*?(\{(.|\s)*?\})+(.|\s)*?;"))
         good_code = code
-
         good_code = good_code.replace("\n{", "{")
         good_code = good_code.replace(",\n", ",")
+        good_code = good_code.replace("\\\n", "")
         for pattern in p:
             good_code = pattern.sub(r"", good_code)
+
         depth = 0;
         distance_to_func_decl= -1
         func_def = ''
@@ -85,6 +90,7 @@ class SimVuln():
         is_function = 0
         self.good_code = good_code
         first = 1
+        
         for i in xrange(len(good_code)):
             if depth == 0:
                 if good_code[i] == '{':
@@ -135,12 +141,13 @@ class SimVuln():
                     depth -= 1
                     if is_function:
                         if depth == 0:
-                            if func_def not in self.code_dict:
-                                if module_usage == True:
+                            if module_usage == True:
+                                if func_def not in code_dict:
                                     code_dict[func_def] = cur_function_code
-                                else:
+                            else:
+                                if func_def not in self.code_dict:
                                     self.code_dict[func_def] = cur_function_code
-                                cur_function_code = ''
+                            cur_function_code = ''
                             func_def = ''
                             is_function = 0
                             continue
@@ -149,7 +156,7 @@ class SimVuln():
         if module_usage == True:
             return function_list, code_dict
         else:
-            self.function_list = merge_dicts(self.function_list, function_list)
+            self.function_list = self.merge_dicts(self.function_list, function_list)
     def process_cfile(self, c_file):
         cur_code = ''
         count = 1
@@ -197,7 +204,7 @@ class SimVuln():
             return cut_codes
         else:
             self.tokenized_codes[function_name] = cut_codes
-    def list_similar_functions(self, target_tokenized_code):
+    def list_similar_functions(self, cur_func_name, target_tokenized_code):
         count = 1
         tokens = self.tokens
         exclude_list = self.tokens_exclude
@@ -215,7 +222,7 @@ class SimVuln():
             except:
                 raise Exception, "Error in list_similar_functions[1]\n"
         for func in tokenized_codes:
-            print "[counting similarity %d/%d] %s"%(count, func_count, func)
+##            print "[counting similarity %d/%d] %s"%(count, func_count, func)
             count += 1
             tmp_array = []
             empty_func = 0
@@ -229,17 +236,19 @@ class SimVuln():
                 except:
                     raise Exception, "Error in list_similar_functions[2]\n"#, tokens, i
             if len(tmp_array): # exclude empty func
-                dtw_distance = dynamicTimeWarp(target_array, tmp_array)
+                dtw_distance = self.dynamicTimeWarp(target_array, tmp_array)
                 similarity_dict[func] = dtw_distance
         import operator
         sim_dict = sorted(similarity_dict.items(), key=operator.itemgetter(1))
+        print sorted(similarity_dict.items(), key=operator.itemgetter(1))[:3]
         print "%s\t%s\t%s"%("FUNC_NAME", "DTW_DISTANCE", "FILE_PATH")
         count = 0
         for func_name, similarity in sim_dict:
             count += 1
             print "%s\t%s\t%s"%(func_name, similarity, self.function_list[func_name])
             if count == 10:
-                return
+                break
+        self.similarity_dict[cur_func_name] = similarity_dict.copy()
 if __name__ == '__main__':
     import os
     from time import time
@@ -295,7 +304,7 @@ if __name__ == '__main__':
         tokenized_code = sv.tokenize_function(CodeSensorPath, cur, code_dict, True)
         print "============================================================="
         print "Checking similar functions for [%s]\n"%(cur)
-        sv.list_similar_functions(tokenized_code)
-    
+        sv.list_similar_functions(cur, tokenized_code)
+        
 ##        sv.list_similar_functions(target="fdctrl_read_data")
     
